@@ -71,14 +71,18 @@ func (f *Fetcher) submit(ids []int64) *batch {
 	for _, id := range ids {
 		batch.ids[id] = struct{}{}
 	}
-	currentBatchSize := len(batch.ids)
-	f.muBatch.Unlock()
 
 	// If the batch exceeds the batch size, run it now.
-	if currentBatchSize >= f.batchSize {
+	if len(batch.ids) >= f.batchSize {
+		// Create a new batch while still in the critical section.
+		f.batch = newBatch()
+		f.muBatch.Unlock()
+
+		// Run the full batch.
 		f.run(batch)
 		return batch
 	}
+	f.muBatch.Unlock()
 
 	// Otherwise, start a timer to run it after f.wait.
 	go func() {
@@ -91,9 +95,11 @@ func (f *Fetcher) submit(ids []int64) *batch {
 
 func (f *Fetcher) run(batch *batch) {
 	batch.runOnce.Do(func() {
-		// Start a new batch for the next request.
+		// If this batch is still the current batch, start a new one.
 		f.muBatch.Lock()
-		f.batch = newBatch()
+		if f.batch == batch {
+			f.batch = newBatch()
+		}
 		f.muBatch.Unlock()
 
 		// Reassemble the id set into a slice of ids.
