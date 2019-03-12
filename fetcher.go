@@ -46,10 +46,12 @@ type Fetcher struct {
 	fetch     func([]int64) ([]interface{}, error)
 	cacheTTL  time.Duration
 
-	batch   *batch       // current pending batch
-	cache   *lru.Cache   // response cache
-	muBatch sync.Mutex   // synchronizes access to batch
-	muCache sync.RWMutex // synchronizes access to cache
+	batch      *batch       // current pending batch
+	cache      *lru.Cache   // response cache
+	muCache    sync.RWMutex // synchronizes access to cache
+	workerOnce sync.Once
+
+	requests chan request
 }
 
 func New(cfg *Config) *Fetcher {
@@ -59,49 +61,48 @@ func New(cfg *Config) *Fetcher {
 		wait:      cfg.Wait,
 		fetch:     cfg.Fetch,
 
-		batch: newBatch(),
-		cache: lru.New(cfg.CacheSize),
+		batch:    newBatch(),
+		cache:    lru.New(cfg.CacheSize),
+		requests: make(chan request),
 	}
 }
 
 func (f *Fetcher) submit(ids []int64) *batch {
-	// Add the ids to the current batch.
-	f.muBatch.Lock()
-	batch := f.batch
-	for _, id := range ids {
-		batch.ids[id] = struct{}{}
+	f.workerOnce.Do(func() { go f.worker() }) // ensure worker goroutine running
+	resp := make(chan *batch)
+	f.requests <- request{ids, resp}
+	return <-resp
+}
+
+type request struct {
+	ids  []int64
+	resp chan *batch
+}
+
+func (f *Fetcher) worker() {
+	ticker := time.Tick(f.wait)
+	for {
+		select {
+		case req := <-f.requests:
+			req.resp <- f.batch
+			for _, id := range req.ids {
+				f.batch.ids[id] = struct{}{}
+			}
+			if len(f.batch.ids) > f.batchSize {
+				go f.run(f.batch)
+				f.batch = newBatch()
+			}
+		case <-ticker:
+			if len(f.batch.ids) > 0 {
+				go f.run(f.batch)
+				f.batch = newBatch()
+			}
+		}
 	}
-
-	// If the batch exceeds the batch size, run it now.
-	if len(batch.ids) >= f.batchSize {
-		// Create a new batch while still in the critical section.
-		f.batch = newBatch()
-		f.muBatch.Unlock()
-
-		// Run the full batch.
-		f.run(batch)
-		return batch
-	}
-	f.muBatch.Unlock()
-
-	// Otherwise, start a timer to run it after f.wait.
-	go func() {
-		<-time.After(f.wait)
-		f.run(batch)
-	}()
-
-	return batch
 }
 
 func (f *Fetcher) run(batch *batch) {
 	batch.runOnce.Do(func() {
-		// If this batch is still the current batch, start a new one.
-		f.muBatch.Lock()
-		if f.batch == batch {
-			f.batch = newBatch()
-		}
-		f.muBatch.Unlock()
-
 		// Reassemble the id set into a slice of ids.
 		ids := make([]int64, 0, len(batch.ids))
 		for id, _ := range batch.ids {

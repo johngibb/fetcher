@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"runtime/pprof"
 	"sort"
 	"sync"
 	"testing"
@@ -37,6 +39,12 @@ func TestDataLoader(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var expectedFetches [][]int64
+
+	go func() {
+		time.Sleep(1 * time.Second)
+		pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
+		panic("not done")
+	}()
 
 	// First, submit 2 requests: 1,2,3 and 3,4,5. They should be fetched in one
 	// batch.
