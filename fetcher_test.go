@@ -185,7 +185,7 @@ func TestFetchPanic(t *testing.T) {
 	if !strings.Contains(err.Error(), "panic: internal error") {
 		t.Errorf("err missing panic message. got:\n%s", err.Error())
 	}
-	if !strings.Contains(err.Error(), "fetcher_test.go:") {
+	if !strings.Contains(err.Error(), "fetcher.go:") {
 		t.Errorf("err missing stack trace. got:\n%s", err.Error())
 	}
 }
