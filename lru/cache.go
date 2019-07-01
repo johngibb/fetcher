@@ -3,14 +3,14 @@ package lru
 
 // Cache implements an LRU cache.
 type Cache struct {
-	keys map[int64]*cacheElem
+	keys map[interface{}]*cacheElem
 	head *cacheElem // circular list
 	size int        // keys
 }
 
 type cacheElem struct {
 	prev, next *cacheElem
-	key        int64
+	key        interface{}
 	val        interface{}
 }
 
@@ -23,13 +23,13 @@ func New(size int) *Cache {
 	head.prev = head
 	head.next = head
 	return &Cache{
-		keys: make(map[int64]*cacheElem),
+		keys: make(map[interface{}]*cacheElem),
 		head: head,
 		size: size,
 	}
 }
 
-func (c *Cache) Put(key int64, val interface{}) {
+func (c *Cache) Put(key, val interface{}) {
 	if c.size <= 0 {
 		return
 	}
@@ -49,7 +49,7 @@ func (c *Cache) Put(key int64, val interface{}) {
 	c.keys[key] = elem
 }
 
-func (c *Cache) Get(key int64) interface{} {
+func (c *Cache) Get(key interface{}) interface{} {
 	if c.size <= 0 {
 		return nil
 	}
