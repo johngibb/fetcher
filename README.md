@@ -8,23 +8,13 @@ by their identifiers.
 ## Example
 
 ```go
-fetch := func(ids []int64) (map[int64]interface{}, error) {
+fetch := func(ids []int64) (map[int64]*Customer{}, error) {
     // Create a context with a 10 second timeout.
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
     defer cancel()
 
     // Make a database query to fetch this batch of customers.
-    customers, err := repo.GetCustomers(ctx, ids)
-    if err != nil {
-        return nil, err
-    }
-
-    // Return the result as a map[int64]interface{}.
-    result := make(map[int64]interface{})
-    for id, customer := range customers {
-        result[id] = customer
-    }
-    return result, nil
+    return repo.GetCustomers(ctx, ids)
 }
 
 // Create a new fetcher.

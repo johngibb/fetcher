@@ -21,10 +21,10 @@ func ExampleFetcher() {
 
 	// Define a fetcher function. In reality, this would probably hit an
 	// external datastore, and have a timeout set.
-	fetch := func(ids []int64) (map[int64]interface{}, error) {
-		result := make(map[int64]interface{})
+	fetch := func(ids []int64) (map[int64]*Customer, error) {
+		result := make(map[int64]*Customer)
 		for _, id := range ids {
-			result[id] = Customer{ID: id}
+			result[id] = &Customer{ID: id}
 		}
 		return result, nil
 	}
@@ -39,13 +39,14 @@ func ExampleFetcher() {
 	})
 
 	// Fetch customers 1 and 2.
-	customers, err := f.Get(context.Background(), []int64{1, 2})
+	result, err := f.Get(context.Background(), []int64{1, 2})
 	if err != nil {
 		panic(err)
 	}
+	customers := result.(map[int64]*Customer)
 
 	fmt.Printf("num returned: %d\n", len(customers))
-	fmt.Printf("customer[1].ID: %d\n", customers[1].(Customer).ID)
+	fmt.Printf("customer[1].ID: %d\n", customers[1].ID)
 	// Output:
 	// num returned: 2
 	// customer[1].ID: 1
@@ -53,8 +54,8 @@ func ExampleFetcher() {
 
 func TestFetchSuccess(t *testing.T) {
 	var fetches [][]int64
-	fetch := func(ids []int64) (map[int64]interface{}, error) {
-		result := make(map[int64]interface{})
+	fetch := func(ids []int64) (map[int64]string, error) {
+		result := make(map[int64]string)
 		fetches = append(fetches, ids)
 		for _, id := range ids {
 			result[id] = fmt.Sprint(id)
@@ -77,24 +78,26 @@ func TestFetchSuccess(t *testing.T) {
 	expectedFetches = append(expectedFetches, []int64{1, 2, 3, 4, 5})
 	wg.Add(2)
 	go func() {
-		results, err := f.Get(context.Background(), []int64{1, 2, 3})
+		result, err := f.Get(context.Background(), []int64{1, 2, 3})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(results) != 3 {
-			t.Errorf("len(results): got %d, want 3", len(results))
+		vals := result.(map[int64]string)
+		if len(vals) != 3 {
+			t.Errorf("len(results): got %d, want 3", len(vals))
 		}
 		wg.Done()
 	}()
 
 	go func() {
-		results, err := f.Get(context.Background(), []int64{3, 4, 5})
+		result, err := f.Get(context.Background(), []int64{3, 4, 5})
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := map[int64]interface{}{3: "3", 4: "4", 5: "5"}
-		if !reflect.DeepEqual(results, want) {
-			t.Errorf("results: got %v, want %v", results, want)
+		vals := result.(map[int64]string)
+		want := map[int64]string{3: "3", 4: "4", 5: "5"}
+		if !reflect.DeepEqual(vals, want) {
+			t.Errorf("results: got %v, want %v", vals, want)
 		}
 		wg.Done()
 	}()
@@ -105,12 +108,13 @@ func TestFetchSuccess(t *testing.T) {
 	wg.Wait()
 	wg.Add(1)
 	go func() {
-		results, err := f.Get(context.Background(), []int64{4, 5, 6})
+		result, err := f.Get(context.Background(), []int64{4, 5, 6})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(results) != 3 {
-			t.Errorf("len(results): got %d, want 3", len(results))
+		vals := result.(map[int64]string)
+		if len(vals) != 3 {
+			t.Errorf("len(results): got %d, want 3", len(vals))
 		}
 		wg.Done()
 	}()
@@ -120,12 +124,13 @@ func TestFetchSuccess(t *testing.T) {
 	wg.Wait()
 	wg.Add(1)
 	go func() {
-		results, err := f.Get(context.Background(), []int64{4, 5, 6})
+		result, err := f.Get(context.Background(), []int64{4, 5, 6})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(results) != 3 {
-			t.Errorf("len(results): got %d, want 3", len(results))
+		vals := result.(map[int64]string)
+		if len(vals) != 3 {
+			t.Errorf("len(results): got %d, want 3", len(vals))
 		}
 		wg.Done()
 	}()

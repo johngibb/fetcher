@@ -9,6 +9,7 @@ package fetcher
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -63,7 +64,9 @@ type Config struct {
 	// occurs, it will be handled and returned wrapped in PanicError. However,
 	// you may want to add your own panic handling in order to capture a stack
 	// trace.
-	Fetch func([]int64) (map[int64]interface{}, error)
+	//
+	// Signature: func([]KeyType) (map[KeyType]ValueType, error)
+	Fetch interface{}
 
 	// CacheTTL is the amount of time for which response should be cached. Zero
 	// will disable caching entirely.
@@ -77,7 +80,7 @@ type Config struct {
 type Fetcher struct {
 	batchSize int
 	cacheTTL  time.Duration
-	fetchFn   func([]int64) (map[int64]interface{}, error)
+	fetchFn   fetchFunc
 	wait      time.Duration
 
 	batch   *batch     // current pending batch
@@ -88,19 +91,19 @@ type Fetcher struct {
 
 // batch represents a single fetch.
 type batch struct {
-	ids     map[int64]struct{} // set of ids in batch
-	runOnce sync.Once          // ensure batch is only fetched once
-	done    chan struct{}      // signal that batch is done
+	ids     keySet        // set of ids in batch
+	runOnce sync.Once     // ensure batch is only fetched once
+	done    chan struct{} // signal that batch is done
 
-	results map[int64]interface{} // results from batch
-	err     error                 // error from batch
+	results resultMap // results from batch
+	err     error     // error from batch
 }
 
-func newBatch() *batch {
+func newBatch(keyType, valType reflect.Type) *batch {
 	return &batch{
 		done:    make(chan struct{}),
-		ids:     make(map[int64]struct{}),
-		results: make(map[int64]interface{}),
+		ids:     newKeySet(keyType, 0),
+		results: newResultMap(keyType, valType, 0),
 	}
 }
 
@@ -111,30 +114,32 @@ type cacheEntry struct {
 
 // New creates a new Fetcher with the provided parameters.
 func New(cfg *Config) *Fetcher {
+	fetchFn := newFetchFunc(cfg.Fetch)
 	return &Fetcher{
 		batchSize: cfg.BatchSize,
 		cacheTTL:  cfg.CacheTTL,
 		wait:      cfg.Wait,
-		fetchFn:   cfg.Fetch,
+		fetchFn:   fetchFn,
 
-		batch: newBatch(),
+		batch: newBatch(fetchFn.keyType, fetchFn.valType),
 		cache: lru.New(cfg.CacheSize),
 	}
 }
 
 // submit adds the given ids to the pending batch.
-func (f *Fetcher) submit(ids []int64) *batch {
+func (f *Fetcher) submit(ids keySet) *batch {
 	// Add the ids to the current batch.
 	f.muBatch.Lock()
 	batch := f.batch
-	for _, id := range ids {
-		batch.ids[id] = struct{}{}
+	iter := ids.Range()
+	for iter.Next() {
+		batch.ids.Add(iter.Key())
 	}
 
 	// If the batch exceeds the batch size, run it now.
-	if len(batch.ids) >= f.batchSize {
+	if batch.ids.Len() >= f.batchSize {
 		// Create a new batch while still in the critical section.
-		f.batch = newBatch()
+		f.batch = newBatch(f.fetchFn.keyType, f.fetchFn.valType)
 		f.muBatch.Unlock()
 
 		// Run the full batch.
@@ -158,14 +163,16 @@ func (f *Fetcher) run(batch *batch) {
 		// If this batch is still the current batch, start a new one.
 		f.muBatch.Lock()
 		if f.batch == batch {
-			f.batch = newBatch()
+			f.batch = newBatch(f.fetchFn.keyType, f.fetchFn.valType)
 		}
 		f.muBatch.Unlock()
 
 		// Reassemble the id set into a slice of ids.
-		ids := make([]int64, 0, len(batch.ids))
-		for id := range batch.ids {
-			ids = append(ids, id)
+		ids := newKeySet(f.fetchFn.keyType, batch.ids.Len())
+
+		iter := batch.ids.Range()
+		for iter.Next() {
+			ids.Add(iter.Key())
 		}
 
 		// Perform the fetch.
@@ -173,12 +180,15 @@ func (f *Fetcher) run(batch *batch) {
 
 		// Populate the batch results.
 		batch.err = err
-		for id, r := range results {
-			batch.results[id] = r
-		}
+		if err == nil {
+			iter := results.Range()
+			for iter.Next() {
+				batch.results.Set(iter.Key(), iter.Value())
+			}
 
-		// Save this batch to cache.
-		f.saveToCache(batch.results)
+			// Save this batch to cache.
+			f.saveToCache(batch.results)
+		}
 
 		// Signal to all waiting callers that the batch is complete.
 		close(batch.done)
@@ -186,40 +196,43 @@ func (f *Fetcher) run(batch *batch) {
 }
 
 // fetch calls the provided Fetch function, catching panics.
-func (f *Fetcher) fetch(ids []int64) (_ map[int64]interface{}, err error) {
+func (f *Fetcher) fetch(ids keySet) (_ resultMap, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = newPanicErr(4, r)
 		}
 	}()
-	return f.fetchFn(ids)
+	return f.fetchFn.Fetch(ids.Slice())
 }
 
-func (f *Fetcher) saveToCache(results map[int64]interface{}) {
+func (f *Fetcher) saveToCache(results resultMap) {
 	if f.cacheTTL == 0 {
 		return
 	}
 	expires := time.Now().Add(f.cacheTTL)
 	f.muCache.Lock()
-	for id, val := range results {
-		f.cache.Put(id, cacheEntry{val, expires})
+	iter := results.Range()
+	for iter.Next() {
+		f.cache.Put(iter.Key().Interface(), cacheEntry{iter.Value(), expires})
 	}
 	f.muCache.Unlock()
 }
 
-func (f *Fetcher) getFromCache(ids []int64) (cached map[int64]interface{}, uncached []int64) {
+func (f *Fetcher) getFromCache(ids keySet) (cached resultMap, uncached keySet) {
 	if f.cacheTTL == 0 {
-		return nil, ids
+		return newResultMap(f.fetchFn.keyType, f.fetchFn.valType, 0), ids
 	}
-	result := make(map[int64]interface{})
+	uncached = newKeySet(f.fetchFn.keyType, 0)
+	result := newResultMap(f.fetchFn.keyType, f.fetchFn.valType, 0)
 	now := time.Now()
 	f.muCache.Lock()
-	for _, id := range ids {
-		if entry, ok := f.cache.Get(id).(cacheEntry); ok && entry.expires.After(now) {
-			result[id] = entry.val
+	iter := ids.Range()
+	for iter.Next() {
+		if entry, ok := f.cache.Get(iter.Key().Interface()).(cacheEntry); ok && entry.expires.After(now) {
+			result.Set(iter.Key(), entry.val.(reflect.Value))
 			continue
 		}
-		uncached = append(uncached, id)
+		uncached.Add(iter.Key())
 	}
 	f.muCache.Unlock()
 	return result, uncached
@@ -227,11 +240,13 @@ func (f *Fetcher) getFromCache(ids []int64) (cached map[int64]interface{}, uncac
 
 // Get fetches all entities for the given ids. It first finds any cached values
 // it can. Then, the remaining values are fetched with the next batch.
-func (f *Fetcher) Get(ctx context.Context, ids []int64) (map[int64]interface{}, error) {
-	cached, uncached := f.getFromCache(ids)
+func (f *Fetcher) Get(ctx context.Context, ids interface{}) (interface{}, error) {
+	idSet := newKeySetFromSlice(ids)
+
+	cached, uncached := f.getFromCache(idSet)
 
 	var batch *batch
-	if len(uncached) > 0 {
+	if uncached.Len() > 0 {
 		// Submit the ids to the current batch.
 		batch = f.submit(uncached)
 
@@ -246,16 +261,17 @@ func (f *Fetcher) Get(ctx context.Context, ids []int64) (map[int64]interface{}, 
 		}
 	}
 
-	result := make(map[int64]interface{}, len(ids))
-	for _, id := range ids {
-		if val, ok := cached[id]; ok {
-			result[id] = val
+	result := newResultMap(f.fetchFn.keyType, f.fetchFn.valType, idSet.Len())
+	iter := idSet.Range()
+	for iter.Next() {
+		if val := cached.Get(iter.Key()); val.Kind() != reflect.Invalid {
+			result.Set(iter.Key(), val)
 		}
 		if batch != nil {
-			if val, ok := batch.results[id]; ok {
-				result[id] = val
+			if val := batch.results.Get(iter.Key()); val.Kind() != reflect.Invalid {
+				result.Set(iter.Key(), val)
 			}
 		}
 	}
-	return result, nil
+	return result.Interface(), nil
 }
