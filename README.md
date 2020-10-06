@@ -18,10 +18,9 @@ fetch := func(ids []int64) (map[int64]*Customer{}, error) {
 }
 
 // Create a new fetcher.
-f := fetcher.New(&fetcher.Config{
+f := fetcher.New(fetch, &fetcher.Config{
     Wait:      1 * time.Millisecond,
     BatchSize: 10,
-    Fetch:     fetch,
     CacheTTL:  100 * time.Second,
     CacheSize: 100,
 })

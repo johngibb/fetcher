@@ -60,14 +60,6 @@ type Config struct {
 	// size.
 	BatchSize int
 
-	// Fetch is the function called to fetch a batch of results. If a panic
-	// occurs, it will be handled and returned wrapped in PanicError. However,
-	// you may want to add your own panic handling in order to capture a stack
-	// trace.
-	//
-	// Signature: func([]KeyType) (map[KeyType]ValueType, error)
-	Fetch interface{}
-
 	// CacheTTL is the amount of time for which response should be cached. Zero
 	// will disable caching entirely.
 	CacheTTL time.Duration
@@ -113,8 +105,15 @@ type cacheEntry struct {
 }
 
 // New creates a new Fetcher with the provided parameters.
-func New(cfg *Config) *Fetcher {
-	fetchFn := newFetchFunc(cfg.Fetch)
+//
+// fetchFunc is the function called to fetch a batch of results. If a panic
+// occurs, it will be handled and returned wrapped in PanicError. However,
+// you may want to add your own panic handling in order to capture a stack
+// trace.
+//
+// Signature: func([]KeyType) (map[KeyType]ValueType, error)
+func New(fetchFunc interface{}, cfg *Config) *Fetcher {
+	fetchFn := newFetchFunc(fetchFunc)
 	return &Fetcher{
 		batchSize: cfg.BatchSize,
 		cacheTTL:  cfg.CacheTTL,

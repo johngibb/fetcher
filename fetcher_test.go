@@ -30,10 +30,9 @@ func ExampleFetcher() {
 	}
 
 	// Create a new fetcher.
-	f := fetcher.New(&fetcher.Config{
+	f := fetcher.New(fetch, &fetcher.Config{
 		Wait:      1 * time.Millisecond,
 		BatchSize: 10,
-		Fetch:     fetch,
 		CacheTTL:  100 * time.Second,
 		CacheSize: 100,
 	})
@@ -62,12 +61,11 @@ func TestFetchSuccess(t *testing.T) {
 		}
 		return result, nil
 	}
-	f := fetcher.New(&fetcher.Config{
+	f := fetcher.New(fetch, &fetcher.Config{
 		Wait:      1 * time.Millisecond,
 		CacheTTL:  100 * time.Second,
 		CacheSize: 100,
 		BatchSize: 10,
-		Fetch:     fetch,
 	})
 
 	var wg sync.WaitGroup
@@ -147,12 +145,11 @@ func TestFetchError(t *testing.T) {
 	fetch := func(ids []int64) (map[int64]interface{}, error) {
 		return nil, errors.New("internal error")
 	}
-	f := fetcher.New(&fetcher.Config{
+	f := fetcher.New(fetch, &fetcher.Config{
 		Wait:      10 * time.Millisecond,
 		CacheTTL:  100 * time.Second,
 		CacheSize: 100,
 		BatchSize: 10,
-		Fetch:     fetch,
 	})
 
 	const k = 10 // 10 simultaneous goroutines get an error.
@@ -175,12 +172,11 @@ func TestFetchPanic(t *testing.T) {
 	fetch := func(ids []int64) (map[int64]interface{}, error) {
 		panic("internal error")
 	}
-	f := fetcher.New(&fetcher.Config{
+	f := fetcher.New(fetch, &fetcher.Config{
 		Wait:      10 * time.Millisecond,
 		CacheTTL:  100 * time.Second,
 		CacheSize: 100,
 		BatchSize: 10,
-		Fetch:     fetch,
 	})
 
 	_, err := f.Get(context.Background(), []int64{1, 2, 3})
@@ -209,12 +205,11 @@ func TestFetchHighLoad(t *testing.T) {
 		return result, nil
 	}
 
-	f := fetcher.New(&fetcher.Config{
+	f := fetcher.New(fetch, &fetcher.Config{
 		Wait:      1 * time.Millisecond,
 		CacheTTL:  100 * time.Second,
 		CacheSize: 100,
 		BatchSize: 10,
-		Fetch:     fetch,
 	})
 
 	const k = 1000

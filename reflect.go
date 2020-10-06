@@ -5,7 +5,7 @@ import (
 	"reflect"
 )
 
-var invalidSignature = errors.New("func should be func(ids []KeyType) ([]ValueType, error)")
+var invalidSignature = errors.New("func should be func([]KeyType) (map[KeyType]ValueType, error)")
 
 type fetchFunc struct {
 	keyType, valType reflect.Type
